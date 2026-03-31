@@ -9,6 +9,7 @@ from analysis.effort_proxies import run_effort_proxy_analysis
 from analysis.collaboration_hypothesis import run_collaboration_analysis
 from analysis.heterogeneity import run_heterogeneity_analysis
 from analysis.referee_tests import run_referee_tests
+from analysis.reviewer_diagnostics import run_reviewer_diagnostics
 
 def run_all(submissions_path, reviews_path, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
@@ -23,6 +24,9 @@ def run_all(submissions_path, reviews_path, output_dir='output'):
 
     # Referee-requested statistical tests (Lemma 2 variance compression + Table 2 interaction)
     results['referee_tests'] = run_referee_tests(submissions_df, reviews_df, output_dir=output_dir)
+
+    # Reviewer-side diagnostics (paper-FE controls, balanced pairs, permutation, predictive validity)
+    results['reviewer_diagnostics'] = run_reviewer_diagnostics(submissions_df, reviews_df, output_dir=output_dir)
 
     return results
 
