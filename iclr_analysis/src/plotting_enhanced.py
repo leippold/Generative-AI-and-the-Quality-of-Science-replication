@@ -1437,6 +1437,119 @@ def create_human_reviewer_rating_violin(
     return fig
 
 
+def create_confidence_by_ai_by_reviewer_type(
+    reviews_df: pd.DataFrame,
+    submissions_df: pd.DataFrame,
+    save_path: Optional[str] = None,
+    reviewer_type: str = 'human'
+) -> Optional[plt.Figure]:
+    """
+    Confidence-by-AI-level violin for a single reviewer type.
+
+    Parameters
+    ----------
+    reviewer_type : str
+        'human' — Fully human-written + Lightly AI-edited
+        'ai'    — Fully AI-generated
+    """
+    setup_style()
+
+    if reviewer_type == 'human':
+        classifications = {'Fully human-written', 'Lightly AI-edited'}
+        title_suffix = '(Human Reviewers Only)'
+        palette = ['#2d8e4e', '#4aa96c', '#6ec48a', '#93dba8', '#b8f2c6']
+        edge_color = '#145a32'
+    else:
+        classifications = {'Fully AI-generated'}
+        title_suffix = '(AI Reviewers Only)'
+        palette = ['#b5342d', '#c6524c', '#d6726c', '#e6928c', '#f2b2ac']
+        edge_color = '#6b1a14'
+
+    subset = reviews_df[reviews_df['ai_classification'].isin(classifications)].copy()
+
+    submissions_clean = _clean_ai_percentage(submissions_df)
+    if 'ai_percentage' not in subset.columns:
+        subset = subset.merge(
+            submissions_clean[['submission_number', 'ai_percentage']],
+            on='submission_number', how='left'
+        )
+    else:
+        subset = _clean_ai_percentage(subset)
+
+    if 'confidence' not in subset.columns:
+        return None
+
+    subset['confidence'] = pd.to_numeric(subset['confidence'], errors='coerce')
+    subset = subset.dropna(subset=['ai_percentage', 'confidence']).copy()
+
+    if len(subset) < 20:
+        return None
+
+    bins = [0, 10, 25, 50, 75, 100]
+    labels = ['0-10%', '10-25%', '25-50%', '50-75%', '75-100%']
+    subset['ai_bin'] = pd.cut(subset['ai_percentage'], bins=bins,
+                               labels=labels, include_lowest=True)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    data_by_bin = [subset[subset['ai_bin'] == lab]['confidence'].dropna().values
+                   for lab in labels]
+
+    # Violin
+    parts = ax.violinplot(data_by_bin, positions=range(len(labels)),
+                          showmeans=False, showmedians=False, showextrema=False)
+    for pc, color in zip(parts['bodies'], palette):
+        pc.set_facecolor(color)
+        pc.set_edgecolor(edge_color)
+        pc.set_alpha(0.7)
+
+    # Box
+    bp = ax.boxplot(data_by_bin, positions=range(len(labels)), widths=0.15,
+                    patch_artist=True, showfliers=False)
+    for patch in bp['boxes']:
+        patch.set_facecolor('white')
+        patch.set_edgecolor(edge_color)
+    for el in ['whiskers', 'caps', 'medians']:
+        plt.setp(bp[el], color=edge_color, linewidth=1.5)
+
+    # Means + annotations
+    means = [np.mean(d) if len(d) > 0 else np.nan for d in data_by_bin]
+    ns = [len(d) for d in data_by_bin]
+    for i, (m, n) in enumerate(zip(means, ns)):
+        if np.isfinite(m):
+            ax.scatter(i, m, color='#d62728', s=80, zorder=5, marker='D',
+                       edgecolor='white', linewidth=1.5)
+            ax.annotate(f'\u03bc={m:.2f}\nn={n:,}', xy=(i, m),
+                        xytext=(i + 0.25, m + 0.08), fontsize=9,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                  edgecolor='gray', alpha=0.9))
+
+    # Trend
+    valid = [(i, m) for i, m in enumerate(means) if np.isfinite(m)]
+    if len(valid) >= 2:
+        xs, ys = zip(*valid)
+        z = np.polyfit(xs, ys, 1)
+        ax.plot(range(len(labels)), np.polyval(z, np.arange(len(labels))),
+                'r--', linewidth=2, label=f'Trend (slope: {z[0]:.3f})')
+
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.set_xlabel('AI Content Level (Paper)', fontsize=13, fontweight='bold')
+    ax.set_ylabel('Reviewer Confidence', fontsize=13, fontweight='bold')
+    ax.set_title(f'Reviewer Confidence by AI Content Level\n{title_suffix}',
+                 fontsize=14, fontweight='bold')
+    ax.legend(loc='upper right', fontsize=10)
+    ax.yaxis.grid(True, linestyle='--', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+
+    if save_path:
+        save_figure(fig, save_path)
+
+    return fig
+
+
 # =============================================================================
 # COMPREHENSIVE BATCH GENERATION
 # =============================================================================
@@ -1581,6 +1694,41 @@ def generate_all_iclr_figures(
             figures['within_paper_scatter'] = path
         except Exception as e:
             print(f"     Failed: {e}")
+
+    # 12. Rating by AI Level — Human Reviewers Only
+    if verbose:
+        print("  12. Rating by AI Level — Human Reviewers Only (Violin)...")
+    try:
+        path = os.path.join(output_dir, 'fig_rating_violin_human_only.png')
+        fig = create_human_reviewer_rating_violin(reviews_df, submissions_df, path)
+        if fig:
+            figures['rating_violin_human_only'] = path
+    except Exception as e:
+        print(f"     Failed: {e}")
+
+    # 13. Confidence by AI Level — Human Reviewers Only
+    if verbose:
+        print("  13. Confidence by AI Level — Human Reviewers Only...")
+    try:
+        path = os.path.join(output_dir, 'fig_confidence_by_ai_human_only.png')
+        fig = create_confidence_by_ai_by_reviewer_type(
+            reviews_df, submissions_df, path, reviewer_type='human')
+        if fig:
+            figures['confidence_by_ai_human'] = path
+    except Exception as e:
+        print(f"     Failed: {e}")
+
+    # 14. Confidence by AI Level — AI Reviewers Only
+    if verbose:
+        print("  14. Confidence by AI Level — AI Reviewers Only...")
+    try:
+        path = os.path.join(output_dir, 'fig_confidence_by_ai_ai_only.png')
+        fig = create_confidence_by_ai_by_reviewer_type(
+            reviews_df, submissions_df, path, reviewer_type='ai')
+        if fig:
+            figures['confidence_by_ai_ai'] = path
+    except Exception as e:
+        print(f"     Failed: {e}")
 
     if verbose:
         print(f"\n✓ Generated {len(figures)} figures in {output_dir}")
