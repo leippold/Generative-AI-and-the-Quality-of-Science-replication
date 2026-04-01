@@ -10,9 +10,10 @@ Five diagnostics to stress-test the within-paper AI-reviewer effect:
 4. Predictive-validity check (which reviewer type better predicts avg_rating)
 5. Summary robustness table
 
-These address the concern that the AI-reviewer coefficient in the paper-FE
-specification might be driven by reviewer-level confounders rather than a
-genuine AI bias.
+Uses within-transformation (demeaning by paper) instead of explicit dummy
+variables for paper fixed effects.  This is numerically equivalent to
+C(submission_number) but scales to any number of papers without creating
+a massive design matrix.
 """
 
 import numpy as np
@@ -62,6 +63,62 @@ def _prepare_diagnostic_data(reviews_df: pd.DataFrame,
     return merged
 
 
+def _demean(df: pd.DataFrame, cols: list, group: str = 'submission_number'):
+    """
+    Within-transform: subtract group means from each column.
+    Equivalent to absorbing paper fixed effects.
+    """
+    out = df.copy()
+    group_means = df.groupby(group)[cols].transform('mean')
+    for c in cols:
+        out[f'{c}_dm'] = df[c] - group_means[c]
+    return out
+
+
+def _fe_ols(df, y_col, x_cols, group='submission_number'):
+    """
+    OLS on demeaned data with clustered SEs — equivalent to paper-FE regression.
+
+    Returns dict with coeff, se, pvalue for each x_col plus model metadata.
+    """
+    import statsmodels.api as sm
+
+    all_cols = [y_col] + x_cols
+    clean = df.dropna(subset=all_cols + [group]).copy()
+
+    # Demean
+    clean = _demean(clean, all_cols, group)
+
+    y = clean[f'{y_col}_dm'].values
+    X = clean[[f'{c}_dm' for c in x_cols]].values
+
+    # OLS on demeaned data (no constant — absorbed by FE)
+    model = sm.OLS(y, X).fit(
+        cov_type='cluster',
+        cov_kwds={'groups': clean[group].values}
+    )
+
+    results = {
+        'n': len(clean),
+        'n_groups': clean[group].nunique(),
+        'model': model,
+    }
+    for i, col in enumerate(x_cols):
+        results[col] = {
+            'coeff': model.params[i],
+            'se': model.bse[i],
+            'pvalue': model.pvalues[i],
+        }
+    return results
+
+
+def _fe_coeff(df, y_col='rating', x_col='reviewer_AI',
+              group='submission_number'):
+    """Quick helper: return just the FE coefficient for x_col."""
+    res = _fe_ols(df, y_col, [x_col], group)
+    return res[x_col]['coeff']
+
+
 # =============================================================================
 # DIAGNOSTIC 1: Paper-FE with review-level controls
 # =============================================================================
@@ -72,10 +129,8 @@ def diagnostic_review_controls(merged: pd.DataFrame,
     Paper-FE regression with and without review-level controls.
 
     Controls added: reviewer confidence, soundness, presentation, contribution.
-    Uses clustered SEs at the paper level.
+    Uses within-transformation + clustered SEs at the paper level.
     """
-    import statsmodels.formula.api as smf
-
     results = {}
 
     if verbose:
@@ -90,71 +145,59 @@ def diagnostic_review_controls(merged: pd.DataFrame,
               f"(papers with both AI and human reviews)")
 
     # --- Baseline: paper FE only ---
-    baseline = smf.ols(
-        'rating ~ reviewer_AI + C(submission_number)',
-        data=merged
-    ).fit(cov_type='cluster',
-          cov_kwds={'groups': merged['submission_number']})
+    base_res = _fe_ols(merged, 'rating', ['reviewer_AI'])
+    b = base_res['reviewer_AI']
 
     results['baseline'] = {
-        'coeff': baseline.params['reviewer_AI'],
-        'se': baseline.bse['reviewer_AI'],
-        'pvalue': baseline.pvalues['reviewer_AI'],
-        'n': n_reviews,
-        'n_papers': n_papers,
+        'coeff': b['coeff'],
+        'se': b['se'],
+        'pvalue': b['pvalue'],
+        'n': base_res['n'],
+        'n_papers': base_res['n_groups'],
     }
 
     if verbose:
-        b = results['baseline']
+        r = results['baseline']
         print(f"\n  Baseline (paper FE only):")
-        print(f"    AI Reviewer coeff = {b['coeff']:.4f} "
-              f"(SE = {b['se']:.4f}, p = {b['pvalue']:.4e})")
+        print(f"    AI Reviewer coeff = {r['coeff']:.4f} "
+              f"(SE = {r['se']:.4f}, p = {r['pvalue']:.4e})")
 
-    # --- With confidence control ---
+    # --- With review-level controls ---
     controls = []
     if 'confidence' in merged.columns and merged['confidence'].notna().sum() > 50:
         controls.append('confidence')
-
-    # Component scores as controls (capture reviewer harshness profile)
     for col in ['soundness', 'presentation', 'contribution']:
         if col in merged.columns and merged[col].notna().sum() > 50:
             controls.append(col)
 
     if controls:
-        ctrl_formula = 'rating ~ reviewer_AI + ' + ' + '.join(controls) + \
-                        ' + C(submission_number)'
-        df_ctrl = merged.dropna(subset=controls + ['rating', 'reviewer_AI'])
+        ctrl_res = _fe_ols(merged, 'rating', ['reviewer_AI'] + controls)
+        c = ctrl_res['reviewer_AI']
 
-        controlled = smf.ols(ctrl_formula, data=df_ctrl).fit(
-            cov_type='cluster',
-            cov_kwds={'groups': df_ctrl['submission_number']}
-        )
+        ctrl_info = {}
+        for ctrl in controls:
+            if ctrl in ctrl_res:
+                ctrl_info[ctrl] = {
+                    'coeff': ctrl_res[ctrl]['coeff'],
+                    'pvalue': ctrl_res[ctrl]['pvalue'],
+                }
 
         results['controlled'] = {
-            'coeff': controlled.params['reviewer_AI'],
-            'se': controlled.bse['reviewer_AI'],
-            'pvalue': controlled.pvalues['reviewer_AI'],
+            'coeff': c['coeff'],
+            'se': c['se'],
+            'pvalue': c['pvalue'],
             'controls': controls,
-            'n': len(df_ctrl),
+            'n': ctrl_res['n'],
+            'control_coeffs': ctrl_info,
         }
-
-        # Report control coefficients
-        ctrl_info = {}
-        for c in controls:
-            if c in controlled.params:
-                ctrl_info[c] = {
-                    'coeff': controlled.params[c],
-                    'pvalue': controlled.pvalues[c],
-                }
-        results['controlled']['control_coeffs'] = ctrl_info
 
         if verbose:
             r = results['controlled']
             print(f"\n  With controls ({', '.join(controls)}):")
             print(f"    AI Reviewer coeff = {r['coeff']:.4f} "
                   f"(SE = {r['se']:.4f}, p = {r['pvalue']:.4e})")
-            for c, info in ctrl_info.items():
-                print(f"    {c}: coeff = {info['coeff']:.4f} "
+            for ctrl, info in ctrl_info.items():
+                print(f"    {ctrl}: coeff = {info['coeff']:.4f} "
                       f"(p = {info['pvalue']:.4e})")
     else:
         results['controlled'] = None
@@ -174,20 +217,16 @@ def diagnostic_balanced_pairs(merged: pd.DataFrame,
     Restrict to papers with exactly 1 AI-flagged and ≥1 human review,
     then re-run the paper-FE regression.
     """
-    import statsmodels.formula.api as smf
-
     if verbose:
         print("\n" + "=" * 70)
         print("DIAGNOSTIC 2: Balanced Paired-Subsample Check")
         print("=" * 70)
 
-    # Count AI vs human reviews per paper
     counts = merged.groupby('submission_number')['reviewer_AI'].agg(
         n_ai='sum', n_total='count'
     )
     counts['n_human'] = counts['n_total'] - counts['n_ai']
 
-    # Balanced: exactly 1 AI and at least 1 human
     balanced_papers = counts[(counts['n_ai'] == 1) &
                              (counts['n_human'] >= 1)].index
     balanced_df = merged[merged['submission_number'].isin(balanced_papers)]
@@ -214,15 +253,11 @@ def diagnostic_balanced_pairs(merged: pd.DataFrame,
         results['pvalue'] = np.nan
         return results
 
-    model = smf.ols(
-        'rating ~ reviewer_AI + C(submission_number)',
-        data=balanced_df
-    ).fit(cov_type='cluster',
-          cov_kwds={'groups': balanced_df['submission_number']})
-
-    results['coeff'] = model.params['reviewer_AI']
-    results['se'] = model.bse['reviewer_AI']
-    results['pvalue'] = model.pvalues['reviewer_AI']
+    res = _fe_ols(balanced_df, 'rating', ['reviewer_AI'])
+    r = res['reviewer_AI']
+    results['coeff'] = r['coeff']
+    results['se'] = r['se']
+    results['pvalue'] = r['pvalue']
 
     if verbose:
         print(f"\n  AI Reviewer coeff = {results['coeff']:.4f} "
@@ -241,11 +276,11 @@ def diagnostic_permutation(merged: pd.DataFrame,
     """
     Permute AI-reviewer labels within each paper to build a null distribution.
     Reports a permutation p-value for the AI-reviewer coefficient.
-    """
-    import statsmodels.formula.api as smf
 
+    Uses within-transformation so each permutation is fast (no dummy matrix).
+    """
     if n_perms is None:
-        n_perms = min(N_PERMUTATIONS, 5000)  # cap for notebook speed
+        n_perms = min(N_PERMUTATIONS, 5000)
 
     if verbose:
         print("\n" + "=" * 70)
@@ -254,29 +289,31 @@ def diagnostic_permutation(merged: pd.DataFrame,
 
     rng = np.random.RandomState(RANDOM_SEED)
 
-    # Observed coefficient
-    obs_model = smf.ols(
-        'rating ~ reviewer_AI + C(submission_number)',
-        data=merged
-    ).fit()
-    observed_coeff = obs_model.params['reviewer_AI']
+    # Observed coefficient (within-transformation)
+    observed_coeff = _fe_coeff(merged)
 
     if verbose:
         print(f"\n  Observed AI Reviewer coeff = {observed_coeff:.4f}")
         print(f"  Permuting AI labels within paper...")
 
+    # Pre-demean rating (paper means don't change across permutations)
+    dm = merged.copy()
+    dm['rating_dm'] = dm['rating'] - dm.groupby('submission_number')['rating'].transform('mean')
+
     perm_coeffs = np.empty(n_perms)
     for i in range(n_perms):
-        shuffled = merged.copy()
-        shuffled['reviewer_AI'] = shuffled.groupby('submission_number')[
+        # Permute reviewer_AI within each paper
+        dm['perm_AI'] = dm.groupby('submission_number')[
             'reviewer_AI'
         ].transform(lambda x: rng.permutation(x.values))
+        dm['perm_AI_dm'] = dm['perm_AI'] - dm.groupby('submission_number')['perm_AI'].transform('mean')
 
-        perm_model = smf.ols(
-            'rating ~ reviewer_AI + C(submission_number)',
-            data=shuffled
-        ).fit()
-        perm_coeffs[i] = perm_model.params['reviewer_AI']
+        # Coefficient = cov(y_dm, x_dm) / var(x_dm)
+        var_x = dm['perm_AI_dm'].var()
+        if var_x > 0:
+            perm_coeffs[i] = (dm['rating_dm'] * dm['perm_AI_dm']).mean() / var_x
+        else:
+            perm_coeffs[i] = 0.0
 
     perm_p = np.mean(np.abs(perm_coeffs) >= np.abs(observed_coeff))
 
@@ -318,7 +355,6 @@ def diagnostic_predictive_validity(merged: pd.DataFrame,
         print("DIAGNOSTIC 4: Predictive Validity")
         print("=" * 70)
 
-    # Mean score by reviewer type per paper
     human_means = (merged[merged['reviewer_AI'] == 0]
                    .groupby('submission_number')['rating'].mean()
                    .rename('human_mean'))
@@ -328,13 +364,11 @@ def diagnostic_predictive_validity(merged: pd.DataFrame,
 
     paper_df = pd.DataFrame({'human_mean': human_means, 'ai_mean': ai_means}).dropna()
 
-    # Use avg_rating from paper-level data as the consensus benchmark
     if 'avg_rating' in merged.columns:
         avg_ratings = (merged.groupby('submission_number')['avg_rating']
                        .first().rename('avg_rating'))
         paper_df = paper_df.join(avg_ratings).dropna()
     else:
-        # Fall back: overall mean across all reviewers
         overall = (merged.groupby('submission_number')['rating']
                    .mean().rename('avg_rating'))
         paper_df = paper_df.join(overall).dropna()
@@ -346,13 +380,11 @@ def diagnostic_predictive_validity(merged: pd.DataFrame,
             print("  Too few papers for predictive validity check.")
         return results
 
-    # Pearson correlations with avg_rating
     r_human, p_human = stats.pearsonr(paper_df['human_mean'],
                                        paper_df['avg_rating'])
     r_ai, p_ai = stats.pearsonr(paper_df['ai_mean'],
                                   paper_df['avg_rating'])
 
-    # Spearman for robustness
     rho_human, _ = stats.spearmanr(paper_df['human_mean'],
                                     paper_df['avg_rating'])
     rho_ai, _ = stats.spearmanr(paper_df['ai_mean'],
@@ -372,15 +404,15 @@ def diagnostic_predictive_validity(merged: pd.DataFrame,
         print(f"\n  Correlation with paper avg_rating:")
         print(f"    Human reviews (Pearson r): {r_human:.4f} (p = {p_human:.4e})")
         print(f"    AI reviews    (Pearson r): {r_ai:.4f} (p = {p_ai:.4e})")
-        print(f"    Human reviews (Spearman ρ): {rho_human:.4f}")
-        print(f"    AI reviews    (Spearman ρ): {rho_ai:.4f}")
+        print(f"    Human reviews (Spearman rho): {rho_human:.4f}")
+        print(f"    AI reviews    (Spearman rho): {rho_ai:.4f}")
 
         if r_human > r_ai:
-            print(f"\n  → Human reviews are more predictive of consensus "
-                  f"(Δr = {r_human - r_ai:.4f})")
+            print(f"\n  -> Human reviews are more predictive of consensus "
+                  f"(delta_r = {r_human - r_ai:.4f})")
         else:
-            print(f"\n  → AI reviews are more predictive of consensus "
-                  f"(Δr = {r_ai - r_human:.4f})")
+            print(f"\n  -> AI reviews are more predictive of consensus "
+                  f"(delta_r = {r_ai - r_human:.4f})")
 
     return results
 
@@ -404,7 +436,6 @@ def diagnostic_summary_table(diag1: Dict, diag2: Dict,
 
     rows = []
 
-    # Baseline paper-FE
     if 'baseline' in diag1:
         b = diag1['baseline']
         rows.append({
@@ -415,7 +446,6 @@ def diagnostic_summary_table(diag1: Dict, diag2: Dict,
             'N': b.get('n', np.nan),
         })
 
-    # With review-level controls
     if diag1.get('controlled') is not None:
         c = diag1['controlled']
         rows.append({
@@ -426,7 +456,6 @@ def diagnostic_summary_table(diag1: Dict, diag2: Dict,
             'N': c.get('n', np.nan),
         })
 
-    # Balanced pairs
     if not np.isnan(diag2.get('coeff', np.nan)):
         rows.append({
             'Specification': f"Balanced pairs (n={diag2['n_balanced_papers']})",
@@ -436,7 +465,6 @@ def diagnostic_summary_table(diag1: Dict, diag2: Dict,
             'N': diag2.get('n_reviews', np.nan),
         })
 
-    # Permutation
     rows.append({
         'Specification': f"Permutation test ({diag3['n_perms']:,} perms)",
         'AI Reviewer coeff': diag3['observed_coeff'],
@@ -453,7 +481,6 @@ def diagnostic_summary_table(diag1: Dict, diag2: Dict,
               f"Human r = {diag4.get('pearson_human', np.nan):.4f}, "
               f"AI r = {diag4.get('pearson_ai', np.nan):.4f}")
 
-    # Save LaTeX
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
         tex_path = os.path.join(output_dir, 'reviewer_diagnostics.tex')
@@ -507,7 +534,6 @@ def run_reviewer_diagnostics(submissions_df: pd.DataFrame,
         print("#  REVIEWER-SIDE DIAGNOSTICS")
         print("#" * 70)
 
-    # Prepare data
     merged = _prepare_diagnostic_data(reviews_df, submissions_df)
 
     if verbose:
@@ -521,7 +547,6 @@ def run_reviewer_diagnostics(submissions_df: pd.DataFrame,
         warnings.warn("Too few reviews with both AI and human reviewers.")
         return {'error': 'insufficient_data'}
 
-    # Run diagnostics
     diag1 = diagnostic_review_controls(merged, verbose=verbose)
     diag2 = diagnostic_balanced_pairs(merged, verbose=verbose)
     diag3 = diagnostic_permutation(merged, n_perms=n_perms, verbose=verbose)
