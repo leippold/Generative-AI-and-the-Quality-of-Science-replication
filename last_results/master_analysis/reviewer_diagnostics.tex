@@ -1,0 +1,14 @@
+\begin{table}
+\caption{Reviewer-side diagnostic regressions}
+\label{tab:reviewer_diagnostics}
+\begin{tabular}{lcccc}
+\toprule
+Specification & AI Reviewer coeff & SE & p-value & N \\
+\midrule
+Baseline paper-FE & 0.3964 & 0.0220 & 0.0000 & 27277.0000 \\
++ Review controls (confidence, soundness, presentation, contribution) & 0.1364 & 0.0153 & 0.0000 & 27277.0000 \\
+Balanced pairs (n=6482) & 0.3752 & 0.0270 & 0.0000 & 18225.0000 \\
+Permutation test (5,000 perms) & 0.3964 & 0.0222 & 0.0000 & NaN \\
+\bottomrule
+\end{tabular}
+\end{table}

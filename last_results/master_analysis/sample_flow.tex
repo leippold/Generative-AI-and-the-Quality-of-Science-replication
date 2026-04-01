@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\centering
+\caption{Sample Construction Flow}
+\label{tab:sample_flow}
+\begin{tabular}{lrrrl}
+\toprule
+Step & N Before & N After & Excluded & Description \\
+\midrule
+Load Retraction Watch & 69,233 & 69,233 & 0 & Raw extraction from Retraction Watch dat... \\
+Valid dates required & 69,233 & 69,232 & 1 & Exclude records with missing retraction ... \\
+Time horizon (2005-2025) & 69,232 & 66,248 & 2,984 & Restrict to papers published 2005-2025... \\
+Valid GIGO (≥36 days) & 66,248 & 59,738 & 6,510 & Exclude negative or implausibly short re... \\
+AI classification & 59,738 & 59,738 & 0 & Classify papers as AI or Human based on ... \\
+Complete covariates & 59,738 & 59,738 & 0 & Exclude records with missing survival co... \\
+\bottomrule
+\end{tabular}
+\end{table}

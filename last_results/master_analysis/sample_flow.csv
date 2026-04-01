@@ -1,0 +1,7 @@
+step,n_before,n_after,excluded,pct_excluded,description
+Load Retraction Watch,69233,69233,0,0.0,Raw extraction from Retraction Watch database
+Valid dates required,69233,69232,1,0.0014443979027342453,Exclude records with missing retraction or publication date
+Time horizon (2005-2025),69232,66248,2984,4.310145597411601,Restrict to papers published 2005-2025
+Valid GIGO (≥36 days),66248,59738,6510,9.826711749788673,Exclude negative or implausibly short retraction windows
+AI classification,59738,59738,0,0.0,Classify papers as AI or Human based on standard definition
+Complete covariates,59738,59738,0,0.0,Exclude records with missing survival covariates

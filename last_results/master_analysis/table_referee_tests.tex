@@ -1,0 +1,26 @@
+\begin{tabular}{lcc}
+\toprule
+\textbf{Test} & \textbf{Statistic} & \textbf{p-value} \\
+\midrule
+\multicolumn{3}{l}{\textit{Panel A: Variance Compression (Lemma 2)}} \\
+\midrule
+Human variance ($\sigma^2_H$) & \multicolumn{2}{c}{3.9991} \\
+AI variance ($\sigma^2_{AI}$) & \multicolumn{2}{c}{3.0453} \\
+Variance ratio ($\sigma^2_H / \sigma^2_{AI}$) & \multicolumn{2}{c}{1.313} \\
+Variance reduction & \multicolumn{2}{c}{23.9\%} \\
+Levene's test (H$_1$: $\sigma^2_{AI} < \sigma^2_H$) & $F = 171.03$ & $0.0000$ \\
+\midrule
+\multicolumn{3}{l}{\textit{Panel B: Component Interaction (Table 2)}} \\
+\midrule
+Interaction ($\beta_3$: AI $\times$ Soundness) & $-0.0505$ & $2.2472e-03$ \\
+95\% CI & \multicolumn{2}{c}{$[-0.0854, -0.0157]$} \\
+\midrule
+\multicolumn{3}{l}{\textit{Panel C: Gradient Flattening (Lemma 2 part iii)}} \\
+\midrule
+Human consensus slope ($\beta_1$) & $0.3333$ & $0.0000e+00$ \\
+AI leniency intercept ($\beta_2$) & $0.4514$ & $1.8065e-15$ \\
+Interaction ($\beta_3$: AI $\times$ LOOM) & $-0.0319$ & $8.2376e-03$ \\
+95\% CI for $\beta_3$ & \multicolumn{2}{c}{$[-0.0580, -0.0058]$} \\
+Sensitivity reduction & \multicolumn{2}{c}{9.6\%} \\
+\bottomrule
+\end{tabular}

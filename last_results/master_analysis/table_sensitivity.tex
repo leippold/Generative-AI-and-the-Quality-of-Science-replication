@@ -1,0 +1,22 @@
+\begin{tabular}{llccc}
+\toprule
+\textbf{Analysis} & \textbf{Specification} & $\hat{\beta}_3$ & \textbf{p-value} & \textbf{Significant} \\
+\midrule
+\multicolumn{5}{l}{\textit{Panel A: Ordinal AI Classification (0-4 scale)}} \\
+\midrule
+AI Level $\times$ LOOM & Continuous (0-4) & -0.0014 & 0.3753 &  \\
+\midrule
+\multicolumn{5}{l}{\textit{Panel B: Pairwise vs Fully Human (Clean LOOM)}} \\
+\midrule
+Lightly AI-edited & n=5,986 & 0.0453 & 0.9951 &  \\
+Moderately AI-edited & n=2,419 & -0.0097 & 0.3523 &  \\
+Heavily AI-edited & n=1,126 & 0.0098 & 0.6140 &  \\
+Fully AI-generated & n=5,779 & -0.0101 & 0.2870 &  \\
+Monotonic gradient & \multicolumn{4}{c}{No} \\
+\midrule
+\multicolumn{5}{l}{\textit{Panel C: Permutation Test (Fully AI vs Fully Human)}} \\
+\midrule
+Actual vs Null & n=1,000 perms & -0.0101 & 0.2880 &  \\
+Null distribution & & \multicolumn{3}{c}{Mean=0.0001, SD=0.0167} \\
+\bottomrule
+\end{tabular}

@@ -1,0 +1,8 @@
+reason,n_excluded
+missing_retraction_date,1
+missing_publication_date,1
+before_start_year,2982
+after_end_year,2
+negative_gigo,0
+gigo_too_short,6510
+missing_survival_covariates,0
