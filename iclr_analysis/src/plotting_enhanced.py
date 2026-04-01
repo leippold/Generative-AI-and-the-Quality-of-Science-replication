@@ -1317,6 +1317,126 @@ def create_confidence_by_ai_figure(
     return fig
 
 
+def create_human_reviewer_rating_violin(
+    reviews_df: pd.DataFrame,
+    submissions_df: pd.DataFrame,
+    save_path: Optional[str] = None,
+    human_classifications: Optional[set] = None
+) -> plt.Figure:
+    """
+    Violin plot of ratings by AI content level, using only human reviewers.
+
+    Parameters
+    ----------
+    reviews_df : DataFrame
+        Review-level data with ai_classification, rating, submission_number
+    submissions_df : DataFrame
+        Paper-level data with submission_number, ai_percentage
+    save_path : str, optional
+        Path to save the figure
+    human_classifications : set, optional
+        Which ai_classification values count as "human".
+        Default: {'Fully human-written', 'Lightly AI-edited'}
+    """
+    setup_style()
+
+    if human_classifications is None:
+        human_classifications = {'Fully human-written', 'Lightly AI-edited'}
+
+    # Filter to human reviewers
+    human_revs = reviews_df[
+        reviews_df['ai_classification'].isin(human_classifications)
+    ].copy()
+
+    # Merge paper-level AI percentage
+    submissions_clean = _clean_ai_percentage(submissions_df)
+    merged = human_revs.merge(
+        submissions_clean[['submission_number', 'ai_percentage']],
+        on='submission_number', how='left'
+    )
+    merged = _clean_ai_percentage(merged)
+    merged['rating'] = pd.to_numeric(merged['rating'], errors='coerce')
+    merged = merged.dropna(subset=['ai_percentage', 'rating']).copy()
+
+    # Bin by AI content level
+    bins = [0, 10, 25, 50, 75, 100]
+    labels = ['0-10%', '10-25%', '25-50%', '50-75%', '75-100%']
+    merged['ai_bin'] = pd.cut(merged['ai_percentage'], bins=bins,
+                               labels=labels, include_lowest=True)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    data_by_bin = [merged[merged['ai_bin'] == lab]['rating'].dropna().values
+                   for lab in labels]
+
+    # Violin
+    parts = ax.violinplot(data_by_bin, positions=range(len(labels)),
+                          showmeans=False, showmedians=False, showextrema=False)
+
+    colors = ['#2d8e4e', '#4aa96c', '#6ec48a', '#93dba8', '#b8f2c6']
+    for pc, color in zip(parts['bodies'], colors):
+        pc.set_facecolor(color)
+        pc.set_edgecolor('#145a32')
+        pc.set_linewidth(1.5)
+        pc.set_alpha(0.8)
+
+    # Embedded box plots
+    bp = ax.boxplot(data_by_bin, positions=range(len(labels)),
+                    widths=0.15, patch_artist=True, showfliers=False, zorder=3)
+    for patch in bp['boxes']:
+        patch.set_facecolor('white')
+        patch.set_edgecolor('#145a32')
+        patch.set_linewidth(1.5)
+    for element in ['whiskers', 'caps', 'medians']:
+        plt.setp(bp[element], color='#145a32', linewidth=1.5)
+
+    # Mean diamonds with annotation
+    means = [np.mean(d) if len(d) > 0 else np.nan for d in data_by_bin]
+    ns = [len(d) for d in data_by_bin]
+
+    for i, (mean, n) in enumerate(zip(means, ns)):
+        if np.isfinite(mean):
+            ax.scatter(i, mean, color='#d62728', s=80, zorder=5, marker='D',
+                       edgecolor='white', linewidth=1.5)
+            ax.annotate(f'\u03bc={mean:.2f}\nn={n:,}', xy=(i, mean),
+                        xytext=(i + 0.25, mean + 0.15), fontsize=9,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                  edgecolor='gray', alpha=0.9))
+
+    # Trend line
+    valid = [(i, m) for i, m in enumerate(means) if np.isfinite(m)]
+    if len(valid) >= 3:
+        xs, ys = zip(*valid)
+        from scipy.interpolate import make_interp_spline
+        try:
+            x_smooth = np.linspace(min(xs), max(xs), 100)
+            spline = make_interp_spline(xs, ys, k=2)
+            ax.plot(x_smooth, spline(x_smooth), '--', color='#d62728',
+                    linewidth=2, alpha=0.7, label='Mean trend')
+        except Exception:
+            ax.plot(xs, ys, '--', color='#d62728', linewidth=2, alpha=0.7,
+                    label='Mean trend')
+
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.set_xlabel('AI Content Level (Paper)', fontsize=13, fontweight='bold')
+    ax.set_ylabel('Rating (Human Reviewers Only)', fontsize=13, fontweight='bold')
+    ax.set_title('Rating Distribution by AI Content Level\n(Human Reviewers Only)',
+                 fontsize=14, fontweight='bold', pad=15)
+
+    ax.legend(loc='upper right', fontsize=10)
+    ax.yaxis.grid(True, linestyle='--', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+
+    if save_path:
+        save_figure(fig, save_path)
+
+    return fig
+
+
 # =============================================================================
 # COMPREHENSIVE BATCH GENERATION
 # =============================================================================
